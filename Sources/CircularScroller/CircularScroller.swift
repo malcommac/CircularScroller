@@ -1,66 +1,90 @@
-//
-//  CircularScrollView.swift
-//
-//  Created by Daniele Margutti on 24/10/2019.
-//  Copyright © 2019 Daniele Margutti. All rights reserved.
-//
+/*
+ * CircularScroller
+ * Efficient and Lightweight endless UIScrollView implementation in Swift
+ *
+ * Created by:    Daniele Margutti
+ * Email:        hello@danielemargutti.com
+ * Web:            http://www.danielemargutti.com
+ * Twitter:        @danielemargutti
+ *
+ * Copyright © 2019 Daniele Margutti
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ */
+
 
 import UIKit
-import Stevia
 
-// MARK: - CircularScrollViewDataSource
+// MARK: - CircularScrollerDataSource
 
-public protocol CircularScrollViewDataSource: class {
+public protocol CircularScrollerDataSource: class {
     
     /// Number of pages of the scrollview.
     ///
     /// - Parameter scrollView: source scrollview.
-    func numberOfPages(scrollView: CircularScrollView) -> Int
+    func numberOfPages(scrollView: CircularScroller) -> Int
     
     /// Return the view at given page index.
     ///
     /// - Parameter page: index of page to render.
     /// - Parameter destinationHolder: position into the holder view for this page (previous view, current view or next view)
     /// - Parameter scrollView: source scrollview.
-    func viewForPage(atIndex page: Int, destinationHolder: CircularScrollView.ViewHolderType, scrollView: CircularScrollView) -> UIView
+    func viewForPage(atIndex page: Int, destinationHolder: CircularScroller.ViewHolderType, scrollView: CircularScroller) -> UIView
     
 }
 
-// MARK: - CircularScrollViewDelegate
+// MARK: - CircularScrollerDelegate
 
-public protocol CircularScrollViewDelegate: class {
+public protocol CircularScrollerDelegate: class {
     
     /// Circular scroll view did scroll to specified location.
     ///
     /// - Parameter location: location of the scroll.
     /// - Parameter scrollView: source scrollview.
-    func circularScrollViewDidScrollTo(location: CGPoint, scrollView: CircularScrollView)
+    func circularScrollerDidScrollTo(location: CGPoint, scrollView: CircularScroller)
     
     /// Circular scroll view did scroll to specified page.
     ///
     /// - Parameter page: page of the scroll.
     /// - Parameter scrollView: source scrollview.
-    func circularScrollViewDidScrollTo(page: Int, scrollView: CircularScrollView)
+    func circularScrollerDidScrollTo(page: Int, scrollView: CircularScroller)
     
     /// This allows you to set the opportunity to preload stuff for a specific page, ie. images.
     ///
     /// - Parameters:
     ///   - pages: page indexes you can start to prefetch.
     ///   - scrollView: source scrollview.
-    func circularScrollViewPrefetchItemsForPages(_ pages: Set<Int>, scrollView: CircularScrollView)
+    func circularScrollerPrefetchItemsForPages(_ pages: Set<Int>, scrollView: CircularScroller)
     
     /// Called when user tap on a page item.
     ///
     /// - Parameters:
     ///   - page: page index.
     ///   - scrollView: source scrollview.
-    func circularScrollViewDidTapOn(page: Int, scrollView: CircularScrollView)
+    func circularScrollerDidTapOn(page: Int, scrollView: CircularScroller)
 
 }
 
 // MARK: - CircularScrollView
 
-public class CircularScrollView: UIView, UIScrollViewDelegate {
+public class CircularScroller: UIView, UIScrollViewDelegate {
     
     // MARK: - Public Properties
     
@@ -72,12 +96,12 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     public private(set) var currentPageIdx = 0
     
     /// Circular scorll view delegate.
-    public weak var circularScrollViewDelegate: CircularScrollViewDelegate?
+    public weak var delegate: CircularScrollerDelegate?
         
     /// Data source.
-    public weak var circularScrollViewDataSource: CircularScrollViewDataSource? {
+    public weak var dataSource: CircularScrollerDataSource? {
         didSet {
-            if circularScrollViewDataSource != nil {
+            if dataSource != nil {
                 loadPageAtIndex(_ : 0)
                 recenterScrollOffset()
             }
@@ -98,7 +122,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     private static let CacheHoldersCount = 3
     
     private lazy var centerPageIndex: Int = {
-       return Int(round( Double(CircularScrollView.CacheHoldersCount) / Double(2)))
+       return Int(round( Double(CircularScroller.CacheHoldersCount) / Double(2)))
     }()
     
     /// Contains the holder views where the page's view were added.
@@ -137,7 +161,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     /// Reload data with the current page index.
     /// If current page index does not exists anymore then starts from 0.
     public func reloadData() {
-        guard let numberOfPages = circularScrollViewDataSource?.numberOfPages(scrollView: self), currentPageIdx < numberOfPages else {
+        guard let numberOfPages = dataSource?.numberOfPages(scrollView: self), currentPageIdx < numberOfPages else {
             currentPageIdx = 0
             reloadData()
             return
@@ -159,7 +183,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
         loadPageAtIndex(currentPageIdx)
         recenterScrollOffset()
 
-        circularScrollViewDelegate?.circularScrollViewDidScrollTo(location: scrollView.contentOffset, scrollView: self)
+        delegate?.circularScrollerDidScrollTo(location: scrollView.contentOffset, scrollView: self)
     }
     
     // MARK: - Private Functions (Layout)
@@ -179,7 +203,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     }
 
     @objc func didTapOnCurrentPage() {
-        circularScrollViewDelegate?.circularScrollViewDidTapOn(page: currentPageIdx, scrollView: self)
+        delegate?.circularScrollerDidTapOn(page: currentPageIdx, scrollView: self)
     }
     
     public override func didMoveToSuperview() {
@@ -201,7 +225,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
         let right = scrollView.rightAnchor.constraint(equalTo: containerView.rightAnchor)
         let top = scrollView.topAnchor.constraint(equalTo: containerView.topAnchor)
         let bottom = scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
-        let width = containerView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: CGFloat(CircularScrollView.CacheHoldersCount))
+        let width = containerView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: CGFloat(CircularScroller.CacheHoldersCount))
         let height = containerView.heightAnchor.constraint(equalTo: self.heightAnchor)
 
         scrollView.addSubview(containerView)
@@ -217,7 +241,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     private func setupCachePagesInContainer() {
         var previousView = containerView
         
-        for idx in 0..<CircularScrollView.CacheHoldersCount {
+        for idx in 0..<CircularScroller.CacheHoldersCount {
             let cachePageView = UIView()
             cachePageView.translatesAutoresizingMaskIntoConstraints = false
             
@@ -226,7 +250,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
             containerView.addSubview(cachePageView)
             cachePageView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 0).isActive = true
             cachePageView.leadingAnchor.constraint(equalTo: (idx == 0 ? containerView.leadingAnchor : previousView.trailingAnchor)).isActive = true
-            cachePageView.widthAnchor.constraint(equalTo: containerView.widthAnchor, multiplier: CGFloat(1)/CGFloat(CircularScrollView.CacheHoldersCount)).isActive = true
+            cachePageView.widthAnchor.constraint(equalTo: containerView.widthAnchor, multiplier: CGFloat(1)/CGFloat(CircularScroller.CacheHoldersCount)).isActive = true
             // cachePageView.heightAnchor.constraint(equalTo: containerView.heightAnchor, multiplier: 1).isActive = true
             // cachePageView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: 0).isActive = true
             let height = cachePageView.heightAnchor.constraint(equalTo: self.heightAnchor)
@@ -257,7 +281,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     ///
     /// - Parameter pageNum: index of the page to load.
     private func loadPageAtIndex(_  newIndex: Int) {
-        guard let dataSource = circularScrollViewDataSource, dataSource.numberOfPages(scrollView: self) > 0 else {
+        guard let dataSource = dataSource, dataSource.numberOfPages(scrollView: self) > 0 else {
             debugPrint("No data source is set or zero items, ignoring loadPageAtIndex call.")
             return
         }
@@ -268,7 +292,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
         scrollView.isScrollEnabled = (disableScrollOnSinglePage && dataSource.numberOfPages(scrollView: self) == 1 ? false : true)
 
         let centerIdx = (centerPageIndex - 1)
-        for cachePageIdx in 0..<CircularScrollView.CacheHoldersCount {
+        for cachePageIdx in 0..<CircularScroller.CacheHoldersCount {
             let incrementValue = (cachePageIdx - centerIdx)
             let realPageIdx = nextPageIndexFrom(newIndex, delta: incrementValue)
                   
@@ -278,7 +302,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
         // Ask for prefetching of the content.
         askForPrefetchFromPageAtIndex(newIndex)
         
-        circularScrollViewDelegate?.circularScrollViewDidScrollTo(page: newIndex, scrollView: self)
+        delegate?.circularScrollerDidScrollTo(page: newIndex, scrollView: self)
     }
     
     /// Ask to the delegate a set of pages to prefetch.
@@ -297,7 +321,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
             pageIndexesToPrefetch.insert(nextPage)
         }
                 
-        circularScrollViewDelegate?.circularScrollViewPrefetchItemsForPages(pageIndexesToPrefetch, scrollView: self)
+        delegate?.circularScrollerPrefetchItemsForPages(pageIndexesToPrefetch, scrollView: self)
     }
     
     /// Place the view of the given page index into one of the cached views (prev, current or next page).
@@ -307,7 +331,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     ///   - cachedIdx: destination cached page view.
     private func loadContentOfPageAtIndex(_ idx: Int, intoCacheView cachedIdx: Int) {
         let location = ViewHolderType(rawValue: cachedIdx)!
-        let contentView = circularScrollViewDataSource!.viewForPage(atIndex: idx, destinationHolder: location, scrollView: self)
+        let contentView = dataSource!.viewForPage(atIndex: idx, destinationHolder: location, scrollView: self)
         let destinationView = holderViews[cachedIdx]
         
         destinationView.subviews.forEach {
@@ -324,7 +348,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     ///   - page: current page index.
     ///   - delta: delta increment, may be positive (1 for next page) or negative (-1 for previous page).
     private func nextPageIndexFrom(_ page: Int, delta: Int) -> Int {
-        let countElements = circularScrollViewDataSource!.numberOfPages(scrollView: self)
+        let countElements = dataSource!.numberOfPages(scrollView: self)
         let nextIndex = Int.circularIndexFrom(page, delta: delta, count: countElements)!
         return nextIndex
     }
@@ -342,7 +366,7 @@ public class CircularScrollView: UIView, UIScrollViewDelegate {
     
 }
 
-public extension CircularScrollView {
+public extension CircularScroller {
     
     enum ViewHolderType: Int {
         case previousPage = 0
@@ -370,6 +394,24 @@ extension Int {
         
         let nextIndex = (current + delta) % count
         return (nextIndex >= 0 ? nextIndex : (count + nextIndex))
+    }
+    
+}
+
+internal extension UIView {
+    
+    func constraintToSuperview() {
+        guard let superview = self.superview else {
+            assert(false, "Error! `superview` was nil – call `addSubview(_ view: UIView)` before calling `\(#function)` to fix this.")
+            return
+        }
+        self.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            topAnchor.constraint(equalTo: superview.topAnchor, constant: 0),
+            bottomAnchor.constraint(equalTo: superview.bottomAnchor, constant: 0),
+            leadingAnchor.constraint(equalTo: superview.leadingAnchor, constant: 0),
+            trailingAnchor.constraint(equalTo: superview.trailingAnchor, constant: 0)
+        ])
     }
     
 }
