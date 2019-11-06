@@ -1,48 +1,115 @@
 //
 //  CircularScrollView.swift
-//  CircularScrollView
 //
-//  Created by daniele on 24/10/2019.
-//  Copyright © 2019 daniele. All rights reserved.
+//  Created by Daniele Margutti on 24/10/2019.
+//  Copyright © 2019 Daniele Margutti. All rights reserved.
 //
 
 import UIKit
+import Stevia
 
-protocol CircularScrollViewDataSource {
-    func numPagesIn(scrollView:CircularScrollView) -> Int
-    func viewFor(page:Int, within scrollView:CircularScrollView) -> UIView
+// MARK: - CircularScrollViewDataSource
+
+public protocol CircularScrollViewDataSource: class {
+    
+    /// Number of pages of the scrollview.
+    ///
+    /// - Parameter scrollView: source scrollview.
+    func numberOfPages(scrollView: CircularScrollView) -> Int
+    
+    /// Return the view at given page index.
+    ///
+    /// - Parameter page: index of page to render.
+    /// - Parameter destinationHolder: position into the holder view for this page (previous view, current view or next view)
+    /// - Parameter scrollView: source scrollview.
+    func viewForPage(atIndex page: Int, destinationHolder: CircularScrollView.ViewHolderType, scrollView: CircularScrollView) -> UIView
+    
 }
 
-protocol CircularScrollViewDelegate {
-    func scrollViewDidScrollTo(location:CGPoint, within scrollView:CircularScrollView)
-    func scrollViewDidScrollTo(page:Int, within scrollView:CircularScrollView)
+// MARK: - CircularScrollViewDelegate
+
+public protocol CircularScrollViewDelegate: class {
+    
+    /// Circular scroll view did scroll to specified location.
+    ///
+    /// - Parameter location: location of the scroll.
+    /// - Parameter scrollView: source scrollview.
+    func circularScrollViewDidScrollTo(location: CGPoint, scrollView: CircularScrollView)
+    
+    /// Circular scroll view did scroll to specified page.
+    ///
+    /// - Parameter page: page of the scroll.
+    /// - Parameter scrollView: source scrollview.
+    func circularScrollViewDidScrollTo(page: Int, scrollView: CircularScrollView)
+    
+    /// This allows you to set the opportunity to preload stuff for a specific page, ie. images.
+    ///
+    /// - Parameters:
+    ///   - pages: page indexes you can start to prefetch.
+    ///   - scrollView: source scrollview.
+    func circularScrollViewPrefetchItemsForPages(_ pages: Set<Int>, scrollView: CircularScrollView)
+    
+    /// Called when user tap on a page item.
+    ///
+    /// - Parameters:
+    ///   - page: page index.
+    ///   - scrollView: source scrollview.
+    func circularScrollViewDidTapOn(page: Int, scrollView: CircularScrollView)
+
 }
 
+// MARK: - CircularScrollView
 
-public class CircularScrollView: UIScrollView, UIScrollViewDelegate {
+public class CircularScrollView: UIView, UIScrollViewDelegate {
     
-    enum ScrollDirection {
-        case forward
-        case backward
-        case none
-    }
+    // MARK: - Public Properties
     
-    internal var pagesView = [UIView]()// [UIView(), UIView(), UIView()]
-    internal var currentPage = 0
-
-    var scrollViewDelegate: CircularScrollViewDelegate? = nil
-
-    var scrollViewDataSource: CircularScrollViewDataSource? = nil {
+    /// When a single page is rendered scroll can be disabled.
+    /// By default is set to `false`.
+    public var disableScrollOnSinglePage = false
+        
+    /// Current page index.
+    public private(set) var currentPageIdx = 0
+    
+    /// Circular scorll view delegate.
+    public weak var circularScrollViewDelegate: CircularScrollViewDelegate?
+        
+    /// Data source.
+    public weak var circularScrollViewDataSource: CircularScrollViewDataSource? {
         didSet {
-            // initialize views when setting new data source
-            
-            if scrollViewDataSource != nil {
-                currentPage = 0
-                loadPageAtIndex(_ : currentPage)
+            if circularScrollViewDataSource != nil {
+                loadPageAtIndex(_ : 0)
                 recenterScrollOffset()
             }
         }
     }
+    
+    // MARK: - Private Properties
+    
+    /// ScrollView with the data.
+    /// 
+    /// NOTE:
+    /// We have used a scrollview instead of ineriths the CircularScrollView from UIScrollView
+    /// because this allows us to specify the height (height of the scrollview's subview to the height
+    /// of self) otherwise autolayout tends to compress the size of the entire control to the size of its content.
+    private var scrollView = UIScrollView()
+
+    /// The number of page view holders.
+    private static let CacheHoldersCount = 3
+    
+    private lazy var centerPageIndex: Int = {
+       return Int(round( Double(CircularScrollView.CacheHoldersCount) / Double(2)))
+    }()
+    
+    /// Contains the holder views where the page's view were added.
+    /// Holders are 3 (previous page, current page, next page).
+    private var holderViews = [UIView]()
+    
+    /// The superview where holders are added. This is the only subview of the scrollview
+    /// and define it's length as contentSize.
+    private var containerView = UIView()
+    
+    // MARK: - Initialization
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -56,196 +123,253 @@ public class CircularScrollView: UIScrollView, UIScrollViewDelegate {
         initializeUI()
     }
     
-    public func moveTo(page:Int) {
-        currentPage = page
-        loadPageAtIndex(_ : currentPage)
+    // MARK: - Public Functions
+    
+    public func setCurrentPageIndex(_ newIndex: Int) {
+        guard newIndex != currentPageIdx else {
+            return
+        }
+        
+        loadPageAtIndex(_ : newIndex)
         recenterScrollOffset()
     }
     
-    private func initializeUI() {
-        clipsToBounds = true
-        isPagingEnabled = true
-        bounces = false
-        showsVerticalScrollIndicator = false
-        showsHorizontalScrollIndicator = false
-        delegate = self
-        setUpSubviews() //from layout extension
-    }
-
-    internal func setUpSubviews() {
-        let containerView = UIView()
-        containerView.translatesAutoresizingMaskIntoConstraints = false
+    /// Reload data with the current page index.
+    /// If current page index does not exists anymore then starts from 0.
+    public func reloadData() {
+        guard let numberOfPages = circularScrollViewDataSource?.numberOfPages(scrollView: self), currentPageIdx < numberOfPages else {
+            currentPageIdx = 0
+            reloadData()
+            return
+        }
         
-        let leftView = UIView()
-        leftView.translatesAutoresizingMaskIntoConstraints = false
-        
-        let  centerView = UIView()
-        centerView.translatesAutoresizingMaskIntoConstraints = false
-        
-         let rightView = UIView()
-        rightView.translatesAutoresizingMaskIntoConstraints = false
-        
-        self.addSubview(containerView)
-        containerView.addSubview(leftView)
-        containerView.addSubview(centerView)
-        containerView.addSubview(rightView)
-        
-        // container view constraints
-        let container_left = self.leftAnchor.constraint(equalTo: containerView.leftAnchor)
-        let container_right = self.rightAnchor.constraint(equalTo: containerView.rightAnchor)
-        let container_top = self.topAnchor.constraint(equalTo: containerView.topAnchor)
-        let container_bottom = self.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
-        let container_height = self.heightAnchor.constraint(equalTo: containerView.heightAnchor)
-        let container_width = self.widthAnchor.constraint(equalTo: containerView.widthAnchor, multiplier: (1/3))
-        
-        self.addConstraints([container_left, container_right, container_top,
-                             container_bottom, container_height, container_width])
-        
-        
-        // left View constraints
-        let left_left = containerView.leftAnchor.constraint(equalTo: leftView.leftAnchor)
-        let left_right = centerView.leftAnchor.constraint(equalTo: leftView.rightAnchor)
-        let left_top = containerView.topAnchor.constraint(equalTo: leftView.topAnchor)
-        let left_bottom = containerView.bottomAnchor.constraint(equalTo: leftView.bottomAnchor)
-        
-        containerView.addConstraints([left_left, left_right, left_top, left_bottom])
-        
-        // center view constraints
-        let center_left = leftView.rightAnchor.constraint(equalTo: centerView.leftAnchor)
-        let center_right = rightView.leftAnchor.constraint(equalTo: centerView.rightAnchor)
-        let center_top = containerView.topAnchor.constraint(equalTo: centerView.topAnchor)
-        let center_bottom = containerView.bottomAnchor.constraint(equalTo: centerView.bottomAnchor)
-        
-        containerView.addConstraints([center_left, center_right, center_top, center_bottom])
-        
-        // right view constraints
-        let right_left = centerView.rightAnchor.constraint(equalTo: rightView.leftAnchor)
-        let right_right = containerView.rightAnchor.constraint(equalTo: rightView.rightAnchor)
-        let right_top = containerView.topAnchor.constraint(equalTo: rightView.topAnchor)
-        let right_bottom = containerView.bottomAnchor.constraint(equalTo: rightView.bottomAnchor)
-        
-        containerView.addConstraints([right_left, right_right, right_top, right_bottom])
-        
-        
-        // equal widths
-        let right_width = rightView.widthAnchor.constraint(equalTo: centerView.widthAnchor)
-        let left_width = leftView.widthAnchor.constraint(equalTo: centerView.widthAnchor)
-        
-        containerView.addConstraints([right_width, left_width])
-        
-        pagesView = [leftView,centerView,rightView]
-        
+        loadPageAtIndex(currentPageIdx)
     }
     
-    private func recenterScrollOffset() {
-        contentOffset = CGPoint(x: bounds.size.width, y: 0)
-    }
-    
-    private func getScrollDirection() -> ScrollDirection {
-        if contentOffset.x == 0 { return .backward }
-        if contentOffset.x == frame.width { return .none }
-        return .forward
-    }
-    
-    public func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        let scrollDirection = getScrollDirection()
-        currentPage = indexOfNextPageAtDirection(scrollDirection, from: currentPage)
-        
-        loadPageAtIndex(currentPage)
-        recenterScrollOffset()
-    }
+    // MARK: - UIScrollView Events
     
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        //calculate offset as if this was a regular UIScrollView and send to delegate
-        if let dataSource = scrollViewDataSource {
-            let numPages = dataSource.numPagesIn(scrollView: self)
-            let fullWidth = frame.width * CGFloat(numPages)
+        guard let delta = determineNextPageDeltaFromScroll() else {
+            return
+        }
+        
+        // Load next page
+        let nextPageToLoad = nextPageIndexFrom(currentPageIdx, delta: delta)
+        currentPageIdx = nextPageToLoad
+        loadPageAtIndex(currentPageIdx)
+        recenterScrollOffset()
+
+        circularScrollViewDelegate?.circularScrollViewDidScrollTo(location: scrollView.contentOffset, scrollView: self)
+    }
+    
+    // MARK: - Private Functions (Layout)
+    
+    private func initializeUI() {
+        scrollView.delegate = self
+        
+        scrollView.clipsToBounds = true
+        scrollView.isPagingEnabled = true
+        scrollView.bounces = true
+        
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapOnCurrentPage))
+        scrollView.addGestureRecognizer(tapGesture)
+    }
+
+    @objc func didTapOnCurrentPage() {
+        circularScrollViewDelegate?.circularScrollViewDidTapOn(page: currentPageIdx, scrollView: self)
+    }
+    
+    public override func didMoveToSuperview() {
+        if superview != nil {
+            // Setup the scroll view.
+            addSubview(scrollView)
+            scrollView.constraintToSuperview()
+
+            setupMainContainer()
+        }
+    }
+    
+    /// Setup the main container which hold the three page cache.
+    private func setupMainContainer() {
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        // containerView.backgroundColor = .yellow
+
+        let left = scrollView.leftAnchor.constraint(equalTo: containerView.leftAnchor)
+        let right = scrollView.rightAnchor.constraint(equalTo: containerView.rightAnchor)
+        let top = scrollView.topAnchor.constraint(equalTo: containerView.topAnchor)
+        let bottom = scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
+        let width = containerView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: CGFloat(CircularScrollView.CacheHoldersCount))
+        let height = containerView.heightAnchor.constraint(equalTo: self.heightAnchor)
+
+        scrollView.addSubview(containerView)
+        scrollView.addConstraints([left, right, top, bottom, width])
+        
+        self.addConstraint(height)
+        
+        setupCachePagesInContainer()
+    }
+    
+    /// Place the three cache view pages (previous, current and next page view).
+    /// Each of these view contains the real pages asked to the datasource.
+    private func setupCachePagesInContainer() {
+        var previousView = containerView
+        
+        for idx in 0..<CircularScrollView.CacheHoldersCount {
+            let cachePageView = UIView()
+            cachePageView.translatesAutoresizingMaskIntoConstraints = false
             
-            let offset = (self.contentOffset.x - frame.width) + (frame.width * CGFloat(currentPage))
-            var finalX = offset
-            
-            if offset < 0 {
-                finalX = fullWidth - offset
-            } else if offset > fullWidth {
-                finalX = offset - fullWidth
+            // cachePageView.backgroundColor = UIColor.randomColor()
+
+            containerView.addSubview(cachePageView)
+            cachePageView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 0).isActive = true
+            cachePageView.leadingAnchor.constraint(equalTo: (idx == 0 ? containerView.leadingAnchor : previousView.trailingAnchor)).isActive = true
+            cachePageView.widthAnchor.constraint(equalTo: containerView.widthAnchor, multiplier: CGFloat(1)/CGFloat(CircularScrollView.CacheHoldersCount)).isActive = true
+            // cachePageView.heightAnchor.constraint(equalTo: containerView.heightAnchor, multiplier: 1).isActive = true
+            // cachePageView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: 0).isActive = true
+            let height = cachePageView.heightAnchor.constraint(equalTo: self.heightAnchor)
+            self.addConstraint(height)
+
+            holderViews.append(cachePageView)
+            previousView = cachePageView
+        }
+    }
+        
+    /// Determine the next page index to cache and load on scroll.
+    private func determineNextPageDeltaFromScroll() -> Int? {
+        let scrollToNextPageOffset = CGFloat(centerPageIndex) * bounds.size.width
+        let scrollToPrevPageOffset = CGFloat(centerPageIndex - 2) * bounds.size.width
+        
+        if scrollView.contentOffset.x >= scrollToNextPageOffset {
+            return 1
+        } else if scrollView.contentOffset.x <= scrollToPrevPageOffset {
+            return -1
+        }
+        
+        return nil
+    }
+    
+    // MARK: Private Methods
+    
+    /// Load a new current page.
+    ///
+    /// - Parameter pageNum: index of the page to load.
+    private func loadPageAtIndex(_  newIndex: Int) {
+        guard let dataSource = circularScrollViewDataSource, dataSource.numberOfPages(scrollView: self) > 0 else {
+            debugPrint("No data source is set or zero items, ignoring loadPageAtIndex call.")
+            return
+        }
+        
+        currentPageIdx = newIndex
+        
+        // Disable scroll for on epage items
+        scrollView.isScrollEnabled = (disableScrollOnSinglePage && dataSource.numberOfPages(scrollView: self) == 1 ? false : true)
+
+        let centerIdx = (centerPageIndex - 1)
+        for cachePageIdx in 0..<CircularScrollView.CacheHoldersCount {
+            let incrementValue = (cachePageIdx - centerIdx)
+            let realPageIdx = nextPageIndexFrom(newIndex, delta: incrementValue)
+                  
+            loadContentOfPageAtIndex(realPageIdx, intoCacheView: cachePageIdx)
+        }
+        
+        // Ask for prefetching of the content.
+        askForPrefetchFromPageAtIndex(newIndex)
+        
+        circularScrollViewDelegate?.circularScrollViewDidScrollTo(page: newIndex, scrollView: self)
+    }
+    
+    /// Ask to the delegate a set of pages to prefetch.
+    ///
+    /// - Parameter currentPage: current page.
+    private func askForPrefetchFromPageAtIndex(_ currentPage: Int) {
+        var pageIndexesToPrefetch = Set<Int>()
+        
+        // Add pages to prefetch
+        let pageRangeToIncludeFromCurrent = 3
+        for idx in -pageRangeToIncludeFromCurrent..<abs(pageRangeToIncludeFromCurrent) {
+            if idx == currentPage {
+                return
             }
-            
-            scrollViewDelegate?.scrollViewDidScrollTo(location: CGPoint(x: finalX, y: 0), within: self)
-
-            if numPages == 2 && contentOffset.x <  frame.width {
-                let leftIndex = indexOfNextPageAtDirection(.backward, from: currentPage)
-                let leftViewContent = dataSource.viewFor(page: leftIndex, within:self)
-                updateContentsOf(page: pagesView[0], with: leftViewContent)
-            }
-
+            let nextPage = nextPageIndexFrom(currentPage, delta: idx)
+            pageIndexesToPrefetch.insert(nextPage)
         }
-        
-        
+                
+        circularScrollViewDelegate?.circularScrollViewPrefetchItemsForPages(pageIndexesToPrefetch, scrollView: self)
     }
     
-    internal func indexOfNextPageAtDirection(_ scrollDirection: ScrollDirection, from page: Int) -> Int {
-        guard let scrollViewDataSource = scrollViewDataSource else {
-            return 0
+    /// Place the view of the given page index into one of the cached views (prev, current or next page).
+    ///
+    /// - Parameters:
+    ///   - idx: index of the page to load.
+    ///   - cachedIdx: destination cached page view.
+    private func loadContentOfPageAtIndex(_ idx: Int, intoCacheView cachedIdx: Int) {
+        let location = ViewHolderType(rawValue: cachedIdx)!
+        let contentView = circularScrollViewDataSource!.viewForPage(atIndex: idx, destinationHolder: location, scrollView: self)
+        let destinationView = holderViews[cachedIdx]
+        
+        destinationView.subviews.forEach {
+            $0.removeFromSuperview()
         }
-
-        let numPages = scrollViewDataSource.numPagesIn(scrollView: self)
-        switch scrollDirection {
-            case .forward:
-                return (page + 1) % numPages
-
-            case .backward:
-                return page > 0 ? page - 1 : numPages - 1
-
-            case .none:
-                return page
-            
-        }
+        
+        destinationView.addSubview(contentView)
+        contentView.constraintToSuperview()
     }
     
-    internal func loadPageAtIndex(_  pageNum:Int) {
-        
-        scrollViewDelegate?.scrollViewDidScrollTo(page: pageNum, within: self)
-        
-        if let dataSource = scrollViewDataSource {
-            let leftIndex = indexOfNextPageAtDirection(.backward, from: pageNum)
-            let leftViewContent = dataSource.viewFor(page: leftIndex, within:self)
-            
-            let rightIndex = indexOfNextPageAtDirection(.forward, from: pageNum)
-            let rightViewContent = dataSource.viewFor(page: rightIndex, within:self)
-            
-            let centerViewContent = dataSource.viewFor(page: pageNum, within:self)
-            
-            updateContentsOf(page: pagesView[0], with: leftViewContent)
-            updateContentsOf(page: pagesView[2], with: rightViewContent)
-            updateContentsOf(page: pagesView[1], with: centerViewContent)
-        }
+    /// Return the next real page index from a current start page.
+    ///
+    /// - Parameters:
+    ///   - page: current page index.
+    ///   - delta: delta increment, may be positive (1 for next page) or negative (-1 for previous page).
+    private func nextPageIndexFrom(_ page: Int, delta: Int) -> Int {
+        let countElements = circularScrollViewDataSource!.numberOfPages(scrollView: self)
+        let nextIndex = Int.circularIndexFrom(page, delta: delta, count: countElements)!
+        return nextIndex
     }
     
-    internal func updateContentsOf(page:UIView, with subview:UIView) {
-        for subview in page.subviews {
-            subview.removeFromSuperview()
-        }
-        
-        subview.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(subview)
-        
-        let top = subview.topAnchor.constraint(equalTo: page.topAnchor)
-        let bottom = subview.bottomAnchor.constraint(equalTo: page.bottomAnchor)
-        let left = subview.leftAnchor.constraint(equalTo: page.leftAnchor)
-        let right = subview.rightAnchor.constraint(equalTo: page.rightAnchor)
-        
-        page.addConstraints([top, bottom, left, right])
+    /// Recenter the scroll offset. This method is usually called after you load a page as current page
+    /// in order to recenter the current page at index 1 (center view).
+    private func recenterScrollOffset() {
+        self.layoutIfNeeded() // update a frame based on constraints, otherwise we'll get zero
+        let centerOffsetX = CGFloat(centerPageIndex - 1) * bounds.size.width
+        // NOTE:
+        // Instead of contentOffset we set the bounds directly in order to avoid triggering didScroll delegate
+        // method which also trigger some other stuff we don't really want to be triggered!
+        scrollView.bounds.origin = CGPoint(x: centerOffsetX, y: 0)
     }
     
 }
 
-
-extension UIColor {
+public extension CircularScrollView {
     
-    static func random(hue: CGFloat = CGFloat.random(in: 0...1),
-                       saturation: CGFloat = CGFloat.random(in: 0.5...1), // from 0.5 to 1.0 to stay away from white
-        brightness: CGFloat = CGFloat.random(in: 0.5...1), // from 0.5 to 1.0 to stay away from black
-        alpha: CGFloat = 1) -> UIColor {
-        return UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: alpha)
+    enum ViewHolderType: Int {
+        case previousPage = 0
+        case currentPage
+        case nextPage
     }
+    
+}
+
+// MARK: - Extension Int (Circular Array)
+
+extension Int {
+    
+    /// Return the next index in a circular array starting from a given index and moving by delta.
+    ///
+    /// - Parameters:
+    ///   - current: current index of the array.
+    ///   - delta: delta increment, may be positive or negative.
+    ///   - count: number of items in array
+    public static func circularIndexFrom(_ current: Int, delta: Int, count: Int) -> Int? {
+        guard current >= 0 && current < count else {
+            debugPrint("Failed to get correct circular index; given start position is out of bounds \(current), total is \(count)")
+            return nil
+        }
+        
+        let nextIndex = (current + delta) % count
+        return (nextIndex >= 0 ? nextIndex : (count + nextIndex))
+    }
+    
 }
